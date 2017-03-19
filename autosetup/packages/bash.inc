@@ -1,0 +1,10 @@
+echo "building bash"
+cd "$PATHAUTOPACKSRC"
+[ -f "$VERSIONBASH.tar.gz" ] || run wget "http://ftp.gnu.org/gnu/bash/$VERSIONBASH.tar.gz"
+[ -d "$VERSIONBASH" ] || run tar xf "$VERSIONBASH.tar.gz"
+run mkdir -p "$PATHAUTOPACKOBJ/$VERSIONBASH"
+cd "$PATHAUTOPACKOBJ/$VERSIONBASH"
+[ -f Makefile ] || run "$PATHAUTOPACKSRC/$VERSIONBASH/configure" --prefix="$PATHAUTOPREFIX"
+run make -j"$JOBS"
+run make install
+[ -h "$PATHAUTOPREFIX/bin/sh" ] || run ln -s "$PATHAUTOPREFIX/bin/bash" "$PATHAUTOPREFIX/bin/sh"

@@ -1,0 +1,10 @@
+--- ./benchspec/CPU2006/447.dealII/src/include/lac/block_vector.h.orig	2016-11-17 21:40:18.088695507 +0100
++++ ./benchspec/CPU2006/447.dealII/src/include/lac/block_vector.h	2016-11-17 21:37:42.698760418 +0100
+@@ -14,6 +14,7 @@
+ #define __deal2__block_vector_h
+ 
+ 
++#include <stddef.h>
+ #include <base/config.h>
+ #include <lac/vector.h>
+ #include <lac/block_indices.h>

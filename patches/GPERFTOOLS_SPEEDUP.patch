@@ -1,0 +1,47 @@
+From 49ff49634debdcc13ebf2e00b8ceb53b3d8c9f72 Mon Sep 17 00:00:00 2001
+From: Istvan Haller <hal_ler@yahoo.com>
+Date: Thu, 17 Mar 2016 13:44:17 +0100
+Subject: [PATCH] Performance fix for SPEC.
+
+---
+ src/common.h    |    4 ++--
+ src/tcmalloc.cc |    3 ++-
+ 2 files changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/src/common.h b/src/common.h
+index c3484d3..15d7ee7 100644
+--- a/src/common.h
++++ b/src/common.h
+@@ -91,13 +91,13 @@ static const size_t kPageShift  = 16;
+ static const size_t kNumClasses = kBaseClasses + 73;
+ #else
+ static const size_t kPageShift  = 13;
+-static const size_t kNumClasses = kBaseClasses + 79;
++static const size_t kNumClasses = kBaseClasses + 79 + 32;
+ #endif
+ 
+ static const size_t kMaxThreadCacheSize = 4 << 20;
+ 
+ static const size_t kPageSize   = 1 << kPageShift;
+-static const size_t kMaxSize    = 256 * 1024;
++static const size_t kMaxSize    = 256 * 1024 * 2;;
+ static const size_t kAlignment  = 8;
+ static const size_t kLargeSizeClass = 0;
+ // For all span-lengths < kMaxPages we keep an exact-size list.
+diff --git a/src/tcmalloc.cc b/src/tcmalloc.cc
+index b7d1913..387ba76 100644
+--- a/src/tcmalloc.cc
++++ b/src/tcmalloc.cc
+@@ -1211,7 +1211,8 @@ ALWAYS_INLINE void* do_calloc(size_t n, size_t elem_size) {
+ 
+   void* result = do_malloc_or_cpp_alloc(size);
+   if (result != NULL) {
+-    memset(result, 0, size);
++    if (size <= kMaxSize)
++      memset(result, 0, size);
+   }
+   return result;
+ }
+-- 
+1.7.9.5
+

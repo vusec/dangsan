@@ -1,0 +1,51 @@
+#ifndef METAPAGETABLE_H
+#define METAPAGETABLE_H
+
+#include <stdbool.h>
+
+#include <metapagetable_core.h>
+
+#define FLAGS_METALLOC_FIXEDCOMPRESSION ${FIXEDCOMPRESSION}
+#define FLAGS_METALLOC_METADATABYTES ${METADATABYTES}
+#define FLAGS_METALLOC_DEEPMETADATA ${DEEPMETADATA}
+#define FLAGS_METALLOC_DEEPMETADATABYTES ${DEEPMETADATABYTES}
+
+extern void (*metalloc_malloc_prehook)(unsigned long size);
+extern void (*metalloc_malloc_posthook)(unsigned long ptr, unsigned long size);
+extern void (*metalloc_free_prehook)(unsigned long ptr, unsigned long size);
+extern void (*metalloc_free_posthook)(unsigned long ptr);
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#if ${ALLOC_SIZE_HOOK_ENABLED} == 1
+#define METALLOC_ALLOC_SIZE_HOOK ${ALLOC_SIZE_HOOK}
+
+unsigned long METALLOC_ALLOC_SIZE_HOOK(unsigned long size);
+
+#endif
+
+#define METALLOC_ALLOC_HOOK ${ALLOC_HOOK}
+
+void METALLOC_ALLOC_HOOK(void *ptr, void *deepmetadata, unsigned long content_size, unsigned long allocation_size);
+
+#if ${RESIZE_HOOK_ENABLED} == 1
+#define METALLOC_RESIZE_HOOK ${RESIZE_HOOK}
+
+void METALLOC_RESIZE_HOOK(void *ptr, unsigned long content_size, unsigned long allocation_size);
+
+#endif
+
+#if ${FREE_HOOK_ENABLED} == 1
+#define METALLOC_FREE_HOOK ${FREE_HOOK}
+
+void METALLOC_FREE_HOOK(void *ptr, unsigned long size);
+
+#endif
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* !METAPAGETABLE_H */

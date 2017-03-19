@@ -1,0 +1,87 @@
+diff -Naur ./benchspec/CPU2006/450.soplex/src/idlist.h ./benchspec/CPU2006/450.soplex/src/idlist.h
+--- ./benchspec/CPU2006/450.soplex/src/idlist.h	2016-11-24 16:28:16.673199838 +0100
++++ ./benchspec/CPU2006/450.soplex/src/idlist.h	2016-11-24 16:30:00.499666292 +0100
+@@ -269,6 +269,13 @@
+    }
+    //@}
+ 
++   static T *moveptr(T *ptr, ptrdiff_t delta)
++   {
++      unsigned long mask = 0x7fffffffffffffffUL;
++      unsigned long newptr = reinterpret_cast<unsigned long>(ptr) + delta;
++      unsigned long maskedptr = newptr & mask;
++      return reinterpret_cast<T*>(maskedptr);
++   }
+ 
+    /**@name Miscellaneous */
+    //@{
+@@ -285,8 +292,7 @@
+          IsList<T>::move(delta);
+          for (elem = last(); elem; elem = prev(elem))
+             if (elem != first())
+-               elem->prev() = reinterpret_cast<T*>(
+-                  reinterpret_cast<char*>(elem->prev()) + delta);
++               elem->prev() = moveptr(elem->prev(), delta);
+       }
+    }
+ 
+diff -Naur ./benchspec/CPU2006/450.soplex/src/islist.h ./benchspec/CPU2006/450.soplex/src/islist.h
+--- ./benchspec/CPU2006/450.soplex/src/islist.h	2016-11-24 16:28:16.673199838 +0100
++++ ./benchspec/CPU2006/450.soplex/src/islist.h	2016-11-24 16:30:00.499666292 +0100
+@@ -340,6 +340,14 @@
+    }
+    //@}
+ 
++   static T *moveptr(T *ptr, ptrdiff_t delta)
++   {
++      unsigned long mask = 0x7fffffffffffffffUL;
++      unsigned long newptr = reinterpret_cast<unsigned long>(ptr) + delta;
++      unsigned long maskedptr = newptr & mask;
++      return reinterpret_cast<T*>(maskedptr);
++   }
++
+    /**@name Miscellaneous */
+    //@{
+    /// adjusts list pointers to a new memory address.
+@@ -356,11 +364,11 @@
+       if (the_first)
+       {
+          T* elem;
+-         the_last  = reinterpret_cast<T*>(reinterpret_cast<char*>(the_last) + delta);
+-         the_first = reinterpret_cast<T*>(reinterpret_cast<char*>(the_first) + delta);
++         the_last  = moveptr(the_last, delta);
++         the_first = moveptr(the_first, delta);
+          for (elem = first(); elem; elem = next(elem))
+             if (elem != last())
+-               elem->next() = reinterpret_cast<T*>(reinterpret_cast<char*>(elem->next()) + delta);
++               elem->next() = moveptr(elem->next(), delta);
+       }
+    }
+ 
+diff -Naur ./benchspec/CPU2006/450.soplex/src/svset.cc ./benchspec/CPU2006/450.soplex/src/svset.cc
+--- ./benchspec/CPU2006/450.soplex/src/svset.cc	2016-11-24 16:28:16.677199779 +0100
++++ ./benchspec/CPU2006/450.soplex/src/svset.cc	2016-11-24 17:38:39.284398866 +0100
+@@ -254,6 +254,14 @@
+    list.move(set.reMax(newmax));
+ }
+ 
++static SVector::Element *moveptr(void *ptr, ptrdiff_t delta)
++{
++   unsigned long mask = 0x7fffffffffffffffUL;
++   unsigned long newptr = reinterpret_cast<unsigned long>(ptr) + delta;
++   unsigned long maskedptr = newptr & mask;
++   return reinterpret_cast<SVector::Element *>(maskedptr);
++}
++
+ void SVSet::memRemax(int newmax)
+ {
+    ptrdiff_t delta = DataArray < SVector::Element > ::reMax(newmax);
+@@ -262,7 +270,7 @@
+    {
+       for (DLPSV* ps = list.first(); ps; ps = list.next(ps))
+       {
+-         SVector::Element * info = reinterpret_cast<SVector::Element*>(reinterpret_cast<char*>(ps->mem()) + delta);
++         SVector::Element * info = moveptr(ps->mem(), delta);
+          int sz = info->idx;
+          int l_max = int( info->val );
+          assert(l_max >= sz );

@@ -1,0 +1,15 @@
+There are two different implementations for the pointer tracking.
+
+Project Structure:
+Each design has its own source files. Whenever common code is required it will be taken out into new source file.
+
+1) Based on FreeSentry
+    - This design is implemented to check the benifit of Metalloc
+    - Gain more understanding and find new issues.
+    Files :
+        pointer_track.c, pointer_track.h
+
+2) per-Thread log model
+    - This design is based on having per-Thread per-Object logs
+    - This avoids lock contention or performance degradation introduced by locking
+    - This should give huge benefit in multi-threaded environment.

@@ -1,0 +1,11 @@
+--- perl-5.8.8.orig/ext/IPC/SysV/SysV.xs	2015-11-10 20:34:41.752275825 +0100
++++ perl-5.8.8/ext/IPC/SysV/SysV.xs	2015-11-10 20:35:06.302848271 +0100
+@@ -4,7 +4,7 @@
+ 
+ #include <sys/types.h>
+ #ifdef __linux__
+-#   include <asm/page.h>
++#define PAGE_SIZE (getpagesize())
+ #endif
+ #if defined(HAS_MSG) || defined(HAS_SEM) || defined(HAS_SHM)
+ #ifndef HAS_SEM

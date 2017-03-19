@@ -1,0 +1,5 @@
+*~
+*.swp
+gperftools/*
+/autosetup.dir/
+/run-*.sh

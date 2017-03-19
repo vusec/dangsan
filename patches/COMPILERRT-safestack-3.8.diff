@@ -1,0 +1,320 @@
+Index: lib/safestack/safestack_flags.cc
+===================================================================
+--- lib/safestack/safestack_flags.cc	(revision 0)
++++ lib/safestack/safestack_flags.cc	(revision 0)
+@@ -0,0 +1,48 @@
++//===-- safestack_flags.cc -------------------------------------------*- C++ -*-===//
++//
++//                     The LLVM Compiler Infrastructure
++//
++// This file is distributed under the University of Illinois Open Source
++// License. See LICENSE.TXT for details.
++//
++//===----------------------------------------------------------------------===//
++//
++// This file is a part of AddressSanitizer, an address sanity checker.
++//
++// SafeStack flag parsing logic.
++//===----------------------------------------------------------------------===//
++
++#include "safestack_flags.h"
++#include "sanitizer_common/sanitizer_common.h"
++#include "sanitizer_common/sanitizer_flags.h"
++#include "sanitizer_common/sanitizer_flag_parser.h"
++
++namespace __safestack {
++
++Flags safestack_flags_dont_use_directly;  // use via flags().
++
++void Flags::SetDefaults() {
++#define SAFESTACK_FLAG(Type, Name, DefaultValue, Description) Name = DefaultValue;
++#include "safestack_flags.inc"
++#undef SAFESTACK_FLAG
++}
++
++static void RegisterSafeStackFlags(FlagParser *parser, Flags *f) {
++#define SAFESTACK_FLAG(Type, Name, DefaultValue, Description) \
++  RegisterFlag(parser, #Name, Description, &f->Name);
++#include "safestack_flags.inc"
++#undef SAFESTACK_FLAG
++}
++
++void InitializeFlags() {
++  Flags *f = flags();
++  f->SetDefaults();
++
++  FlagParser safestack_parser;
++  RegisterSafeStackFlags(&safestack_parser, f);
++  
++  // Override from command line.
++  safestack_parser.ParseString(GetEnv("SAFESTACK_OPTIONS"));
++}
++
++}  // namespace __safestack
+Index: lib/safestack/safestack_flags.h
+===================================================================
+--- lib/safestack/safestack_flags.h	(revision 0)
++++ lib/safestack/safestack_flags.h	(revision 0)
+@@ -0,0 +1,44 @@
++//===-- safestack_flags.h -------------------------------------------*- C++ -*-===//
++//
++//                     The LLVM Compiler Infrastructure
++//
++// This file is distributed under the University of Illinois Open Source
++// License. See LICENSE.TXT for details.
++//
++//===----------------------------------------------------------------------===//
++//
++// This file is a part of SafeStack.
++//
++// SafeStack runtime flags.
++//===----------------------------------------------------------------------===//
++
++#ifndef SAFESTACK_FLAGS_H
++#define SAFESTACK_FLAGS_H
++
++#include "sanitizer_common/sanitizer_internal_defs.h"
++#include "sanitizer_common/sanitizer_flag_parser.h"
++
++// Safestack flag values can be defined in four ways:
++// 1) initialized with default values at startup.
++// 4) overriden from env variable SAFESTACK_OPTIONS.
++
++namespace __safestack {
++
++struct Flags {
++#define SAFESTACK_FLAG(Type, Name, DefaultValue, Description) Type Name;
++#include "safestack_flags.inc"
++#undef SAFESTACK_FLAG
++
++  void SetDefaults();
++};
++
++extern Flags safestack_flags_dont_use_directly;
++inline Flags *flags() {
++  return &safestack_flags_dont_use_directly;
++}
++
++void InitializeFlags();
++
++}  // namespace __safestack
++
++#endif  // SAFESTACK_FLAGS_H
+Index: lib/safestack/safestack.cc
+===================================================================
+--- lib/safestack/safestack.cc	(revision 251286)
++++ lib/safestack/safestack.cc	(working copy)
+@@ -25,6 +25,8 @@
+ #include "interception/interception.h"
+ #include "sanitizer_common/sanitizer_common.h"
+ 
++#include "safestack_flags.h"
++
+ // TODO: The runtime library does not currently protect the safe stack beyond
+ // relying on the system-enforced ASLR. The protection of the (safe) stack can
+ // be provided by three alternative features:
+@@ -80,6 +82,8 @@
+ extern "C" {
+ __attribute__((visibility(
+     "default"))) __thread void *__safestack_unsafe_stack_ptr = nullptr;
++__attribute__((visibility(
++    "default"))) __thread void *__safestack_unsafe_stack_ptr_large = nullptr;
+ }
+ 
+ // Per-thread unsafe stack information. It's not frequently accessed, so there
+@@ -87,10 +91,23 @@
+ static __thread void *unsafe_stack_start = nullptr;
+ static __thread size_t unsafe_stack_size = 0;
+ static __thread size_t unsafe_stack_guard = 0;
++static __thread void *unsafe_stack_start_large = nullptr;
+ 
+-static inline void *unsafe_stack_alloc(size_t size, size_t guard) {
++extern "C" {
++
++__attribute__((weak)) void unsafe_stack_alloc_meta(void *addr, size_t size, bool islarge);
++
++__attribute__((weak)) void unsafe_stack_free_meta(void *unsafe_stack_start, size_t unsafe_stack_size, bool islarge);
++
++}
++
++static inline void *unsafe_stack_alloc(size_t size, size_t guard, bool islarge) {
+   CHECK_GE(size + guard, size);
+-  void *addr = MmapOrDie(size + guard, "unsafe_stack_alloc");
++  void *addr;
++  addr = MmapOrDie(size + guard, "unsafe_stack_alloc");
++  if (unsafe_stack_alloc_meta != nullptr) {
++    unsafe_stack_alloc_meta((char *)addr + guard, size, islarge);
++  }
+   MprotectNoAccess((uptr)addr, (uptr)guard);
+   return (char *)addr + guard;
+ }
+@@ -107,14 +124,34 @@
+   unsafe_stack_guard = guard;
+ }
+ 
++static inline void unsafe_stack_setup_large(void *start, size_t size, size_t guard) {
++  CHECK_GE((char *)start + size, (char *)start);
++  CHECK_GE((char *)start + guard, (char *)start);
++  void *stack_ptr = (char *)start + size;
++  CHECK_EQ((((size_t)stack_ptr) & (kStackAlign - 1)), 0);
++
++  __safestack_unsafe_stack_ptr_large = stack_ptr;
++  unsafe_stack_start_large = start;
++}
++
+ static void unsafe_stack_free() {
+   if (unsafe_stack_start) {
+     UnmapOrDie((char *)unsafe_stack_start - unsafe_stack_guard,
+                unsafe_stack_size + unsafe_stack_guard);
++    if (unsafe_stack_free_meta != nullptr) unsafe_stack_free_meta(unsafe_stack_start, unsafe_stack_size, false);
+   }
+   unsafe_stack_start = nullptr;
+ }
+ 
++static void unsafe_stack_free_large() {
++  if (unsafe_stack_start_large) {
++    UnmapOrDie((char *)unsafe_stack_start_large - unsafe_stack_guard,
++               unsafe_stack_size + unsafe_stack_guard);
++    unsafe_stack_free_meta(unsafe_stack_start_large, unsafe_stack_size, true);
++  }
++  unsafe_stack_start = nullptr;
++}
++
+ /// Thread data for the cleanup handler
+ static pthread_key_t thread_cleanup_key;
+ 
+@@ -126,6 +163,7 @@
+   void *unsafe_stack_start;
+   size_t unsafe_stack_size;
+   size_t unsafe_stack_guard;
++  void *unsafe_stack_start_large;
+ };
+ 
+ /// Wrap the thread function in order to deallocate the unsafe stack when the
+@@ -139,6 +177,9 @@
+   // Setup the unsafe stack; this will destroy tinfo content
+   unsafe_stack_setup(tinfo->unsafe_stack_start, tinfo->unsafe_stack_size,
+                      tinfo->unsafe_stack_guard);
++  if (__safestack::flags()->largestack)
++    unsafe_stack_setup_large(tinfo->unsafe_stack_start_large, tinfo->unsafe_stack_size,
++                     tinfo->unsafe_stack_guard);
+ 
+   // Make sure out thread-specific destructor will be called
+   // FIXME: we can do this only any other specific key is set by
+@@ -160,6 +201,8 @@
+   } else {
+     // This is the last iteration
+     unsafe_stack_free();
++    if (__safestack::flags()->largestack)
++      unsafe_stack_free_large();
+   }
+ }
+ 
+@@ -187,7 +230,7 @@
+   CHECK_EQ((size & (kStackAlign - 1)), 0);
+   CHECK_EQ((guard & (PAGE_SIZE - 1)), 0);
+ 
+-  void *addr = unsafe_stack_alloc(size, guard);
++  void *addr = unsafe_stack_alloc(size, guard, false);
+   struct tinfo *tinfo =
+       (struct tinfo *)(((char *)addr) + size - sizeof(struct tinfo));
+   tinfo->start_routine = start_routine;
+@@ -195,6 +238,10 @@
+   tinfo->unsafe_stack_start = addr;
+   tinfo->unsafe_stack_size = size;
+   tinfo->unsafe_stack_guard = guard;
++  if (__safestack::flags()->largestack) {
++    void *addr_large = unsafe_stack_alloc(size, guard, true);
++    tinfo->unsafe_stack_start_large = addr_large;
++  }
+ 
+   return REAL(pthread_create)(thread, attr, thread_start, tinfo);
+ }
+@@ -205,6 +252,7 @@
+ __attribute__((constructor(0)))
+ #endif
+ void __safestack_init() {
++  __safestack::InitializeFlags();
+   // Determine the stack size for the main thread.
+   size_t size = kDefaultUnsafeStackSize;
+   size_t guard = 4096;
+@@ -214,9 +262,12 @@
+     size = limit.rlim_cur;
+ 
+   // Allocate unsafe stack for main thread
+-  void *addr = unsafe_stack_alloc(size, guard);
+-
++  void *addr = unsafe_stack_alloc(size, guard, false);
+   unsafe_stack_setup(addr, size, guard);
++  if (__safestack::flags()->largestack) {
++    void *addr_large = unsafe_stack_alloc(size, guard, true);
++    unsafe_stack_setup_large(addr_large, size, guard);
++  }
+ 
+   // Initialize pthread interceptors for thread allocation
+   INTERCEPT_FUNCTION(pthread_create);
+@@ -244,3 +295,8 @@
+     __attribute__((visibility("default"))) void *__get_unsafe_stack_ptr() {
+   return __safestack_unsafe_stack_ptr;
+ }
++
++extern "C"
++    __attribute__((visibility("default"))) void *__get_unsafe_stack_ptr_large() {
++  return __safestack_unsafe_stack_ptr_large;
++}
+Index: lib/safestack/safestack_flags.inc
+===================================================================
+--- lib/safestack/safestack_flags.inc	(revision 0)
++++ lib/safestack/safestack_flags.inc	(revision 0)
+@@ -0,0 +1,21 @@
++//===-- stafestack_flags.inc ------------------------------------------*- C++ -*-===//
++//
++//                     The LLVM Compiler Infrastructure
++//
++// This file is distributed under the University of Illinois Open Source
++// License. See LICENSE.TXT for details.
++//
++//===----------------------------------------------------------------------===//
++//
++// SafeStack runtime flags.
++//
++//===----------------------------------------------------------------------===//
++#ifndef SAFESTACK_FLAG
++# error "Define SAFESTACK_FLAG prior to including this file!"
++#endif
++
++// SAFESTACK_FLAG(Type, Name, DefaultValue, Description)
++// See COMMON_FLAG in sanitizer_flags.inc for more details.
++
++SAFESTACK_FLAG(bool, largestack, false,
++          "Use secondary unsafestack for large allocations.")
+Index: lib/safestack/CMakeLists.txt
+===================================================================
+--- lib/safestack/CMakeLists.txt	(revision 251286)
++++ lib/safestack/CMakeLists.txt	(working copy)
+@@ -1,10 +1,11 @@
+ add_custom_target(safestack)
+ 
+-set(SAFESTACK_SOURCES safestack.cc)
++set(SAFESTACK_SOURCES safestack.cc safestack_flags.cc)
+ 
+ include_directories(..)
+ 
+ set(SAFESTACK_CFLAGS ${SANITIZER_COMMON_CFLAGS})
++append_no_rtti_flag(SAFESTACK_CFLAGS)
+ 
+ if(APPLE)
+   # Build universal binary on APPLE.
+Index: cmake/config-ix.cmake
+===================================================================
+--- cmake/config-ix.cmake	(revision 251286)
++++ cmake/config-ix.cmake	(working copy)
+@@ -274,7 +274,7 @@
+ set(ALL_TSAN_SUPPORTED_ARCH ${X86_64} ${MIPS64} ${ARM64})
+ set(ALL_UBSAN_SUPPORTED_ARCH ${X86} ${X86_64} ${ARM32} ${ARM64}
+     ${MIPS32} ${MIPS64} ${PPC64})
+-set(ALL_SAFESTACK_SUPPORTED_ARCH ${X86} ${X86_64})
++set(ALL_SAFESTACK_SUPPORTED_ARCH ${X86_64})
+ 
+ if(APPLE)
+   include(CompilerRTDarwinUtils)

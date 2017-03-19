@@ -1,0 +1,141 @@
+Index: tools/gold/CMakeLists.txt
+===================================================================
+--- tools/gold/CMakeLists.txt	(revision 279329)
++++ tools/gold/CMakeLists.txt	(working copy)
+@@ -1,4 +1,4 @@
+-set(LLVM_EXPORTED_SYMBOL_FILE ${CMAKE_CURRENT_SOURCE_DIR}/gold.exports)
++#set(LLVM_EXPORTED_SYMBOL_FILE ${CMAKE_CURRENT_SOURCE_DIR}/gold.exports)
+ 
+ if( LLVM_ENABLE_PIC AND LLVM_BINUTILS_INCDIR )
+   include_directories( ${LLVM_BINUTILS_INCDIR} )
+Index: tools/gold/gold-plugin.cpp
+===================================================================
+--- tools/gold/gold-plugin.cpp	(revision 279329)
++++ tools/gold/gold-plugin.cpp	(working copy)
+@@ -16,6 +16,7 @@
+ #include "llvm/Analysis/TargetLibraryInfo.h"
+ #include "llvm/Analysis/TargetTransformInfo.h"
+ #include "llvm/Bitcode/ReaderWriter.h"
++#include "llvm/Bitcode/BitcodeWriterPass.h"
+ #include "llvm/CodeGen/Analysis.h"
+ #include "llvm/CodeGen/CommandFlags.h"
+ #include "llvm/CodeGen/ParallelCG.h"
+@@ -26,6 +27,8 @@
+ #include "llvm/IR/DiagnosticPrinter.h"
+ #include "llvm/IR/LLVMContext.h"
+ #include "llvm/IR/LegacyPassManager.h"
++#include "llvm/IR/LegacyPassNameParser.h"
++#include "llvm/IR/AssemblyAnnotationWriter.h"
+ #include "llvm/IR/Module.h"
+ #include "llvm/IR/Verifier.h"
+ #include "llvm/LTO/LTO.h"
+@@ -32,6 +35,8 @@
+ #include "llvm/Linker/IRMover.h"
+ #include "llvm/MC/SubtargetFeature.h"
+ #include "llvm/Object/IRObjectFile.h"
++#include "llvm/Support/PluginLoader.h"
++#include "llvm/Support/FormattedStream.h"
+ #include "llvm/Object/ModuleSummaryIndexObjectFile.h"
+ #include "llvm/Support/Host.h"
+ #include "llvm/Support/ManagedStatic.h"
+@@ -39,6 +44,7 @@
+ #include "llvm/Support/Path.h"
+ #include "llvm/Support/TargetRegistry.h"
+ #include "llvm/Support/TargetSelect.h"
++#include "llvm/Support/ToolOutputFile.h"
+ #include "llvm/Support/ThreadPool.h"
+ #include "llvm/Support/raw_ostream.h"
+ #include "llvm/Support/thread.h"
+@@ -72,6 +78,24 @@
+ static ld_plugin_get_input_file get_input_file = nullptr;
+ static ld_plugin_message message = discard_message;
+ 
++// The OptimizationList is automatically populated with registered Passes by the
++// PassNameParser.
++//
++static cl::list<const PassInfo*, bool, PassNameParser>
++PassList(cl::desc("Optimizations available:"));
++
++static cl::opt<bool>
++DisableOpt("disable-opt", cl::init(false),
++  cl::desc("Do not run any optimization passes"));
++
++static cl::opt<bool>
++DisableInlining("disable-inlining", cl::init(false),
++  cl::desc("Do not run any inlining passes"));
++
++static cl::opt<std::string>
++LLOutputFilename("llo", cl::init(""), cl::desc("Output IR filename"),
++               cl::value_desc("filename"));
++
+ namespace {
+ struct claimed_file {
+   void *handle;
+@@ -1013,7 +1037,11 @@
+ 
+   PassManagerBuilder PMB;
+   PMB.LibraryInfo = new TargetLibraryInfoImpl(Triple(TM->getTargetTriple()));
+-  PMB.Inliner = createFunctionInliningPass();
++  if (DisableInlining) {
++    PMB.Inliner = NULL;
++  }
++  else
++    PMB.Inliner = createFunctionInliningPass();
+   // Unconditionally verify input since it is not verified before this
+   // point and has unknown origin.
+   PMB.VerifyInput = true;
+@@ -1021,11 +1049,54 @@
+   PMB.LoopVectorize = true;
+   PMB.SLPVectorize = true;
+   PMB.OptLevel = options::OptLevel;
++  if (DisableOpt)
++    PMB.OptLevel = 0;
++
+   if (options::thinlto)
+     PMB.populateThinLTOPassManager(passes);
+   else
+     PMB.populateLTOPassManager(passes);
++
++
++  for (unsigned i = 0; i < PassList.size(); ++i) {
++    const PassInfo *PassInf = PassList[i];
++    Pass *P = nullptr;
++    if (PassInf->getTargetMachineCtor())
++      P = PassInf->getTargetMachineCtor()(&TM);
++    else if (PassInf->getNormalCtor())
++      P = PassInf->getNormalCtor()();
++    else
++      errs() << "LLVMgold: cannot create pass: "
++             << PassInf->getPassName() << "\n";
++    if (P) {
++      passes.add(P);
++      passes.add(createVerifierPass());
++    }
++  }
++
++  if (PassList.size() != 0)
++    if (options::thinlto)
++    PMB.populateThinLTOPassManager(passes);
++  else
++    PMB.populateLTOPassManager(passes);
++
++  std::unique_ptr<tool_output_file> Out;
++  if (LLOutputFilename != "") {
++    std::error_code EC;
++    Out.reset(
++      new tool_output_file(LLOutputFilename, EC, sys::fs::F_None));
++    if (EC) {
++      errs() << EC.message() << '\n';
++      return;
++    }
++    passes.add(createBitcodeWriterPass(Out->os()));
++  }
++
+   passes.run(*M);
++
++  if (LLOutputFilename != "") {
++    Out->keep();
++  }
+ }
+ 
+ /// Open a file and return the new file descriptor given a base input

@@ -1,0 +1,10 @@
+--- perl-5.8.8.orig/makedepend.SH	2015-11-10 16:03:47.574265920 +0100
++++ perl-5.8.8/makedepend.SH	2015-11-10 16:04:06.578719285 +0100
+@@ -167,6 +167,7 @@
+             -e '/^#.*<builtin>/d' \
+             -e '/^#.*<built-in>/d' \
+             -e '/^#.*<command line>/d' \
++            -e '/^#.*<command-line>/d' \
+ 	    -e '/^#.*"-"/d' \
+ 	    -e '/: file path prefix .* never used$/d' \
+ 	    -e 's#\.[0-9][0-9]*\.c#'"$file.c#" \
